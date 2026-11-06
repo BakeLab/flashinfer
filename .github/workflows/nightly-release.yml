@@ -86,15 +86,9 @@ jobs:
 
       - name: Load CUDA wheel matrix
         id: cuda-versions
-        env:
-          CI_SERVER_URL: ${{ github.server_url }}
         run: |
-          # Filter before matrix expansion: a job-level if cannot use matrix.
-          for kind in providers shims; do
-            matrix=$(python3 ci/validate_cuda_versions.py --matrix "$kind" |
-              jq -c --arg server "$CI_SERVER_URL" '[.[] | select($server == "https://github.com" or .cpu_architecture == "x86_64")]')
-            echo "$kind=$matrix" >> "$GITHUB_OUTPUT"
-          done
+          echo "providers=$(python3 ci/validate_cuda_versions.py --matrix providers)" >> "$GITHUB_OUTPUT"
+          echo "shims=$(python3 ci/validate_cuda_versions.py --matrix shims)" >> "$GITHUB_OUTPUT"
           echo "runtime=$(jq -c '.runtime' ci/cuda-versions.json)" >> "$GITHUB_OUTPUT"
 
   build-flashinfer-python:
@@ -434,14 +428,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.setup.outputs.release_tag }}
           WHL_TOKEN: ${{ secrets.WHL_TOKEN }}
-          CI_SERVER_URL: ${{ github.server_url }}
         run: |
           mapfile -t CUDA_LABELS < <(jq -r '.jit_cache[].label' ci/cuda-versions.json)
           for cuda_label in "${CUDA_LABELS[@]}"; do
             for arch in x86_64 aarch64; do
-              if [ "$CI_SERVER_URL" != "https://github.com" ] && [ "$arch" = "aarch64" ]; then
-                continue
-              fi
               rm -rf dist-jit-cache
               mkdir -p dist-jit-cache
               gh run download "${GITHUB_RUN_ID}" \

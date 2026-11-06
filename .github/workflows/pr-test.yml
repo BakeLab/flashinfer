@@ -254,9 +254,6 @@ jobs:
           {
             if [ "$SKIP_AOT" != "true" ]; then
               for arch in x64 arm64; do
-                if [ "$CI_SERVER_URL" != "https://github.com" ] && [ "$arch" = "arm64" ]; then
-                  continue
-                fi
                 for cuda in $(jq -r '.[].label' <<< "${RUNTIME_CUDA_MATRIX}"); do
                   # Runtime entries land before their multi-arch image is
                   # published. The release-ci-docker workflow adds the tag in

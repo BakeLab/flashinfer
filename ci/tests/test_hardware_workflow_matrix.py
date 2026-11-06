@@ -54,11 +54,13 @@ class HardwareWorkflowMatrixTest(unittest.TestCase):
         self.assertFalse(any(set(row["runner"]) & {"sm75", "sm86"} for row in rows))
         return rows
 
-    def test_pr_gitea_keeps_sm120_and_x64_builds(self):
+    def test_pr_gitea_keeps_sm120_and_both_cpu_architectures(self):
         rows = self.pr_matrix("https://gitea.example")
         self.assertEqual(sum("sm120" in row["runner"] for row in rows), 5)
         self.assertTrue(any(row["kind"] == "aot" for row in rows))
-        self.assertFalse(any(set(row["runner"]) & {"arm64", "h100"} for row in rows))
+        self.assertTrue(any("arm64" in row["runner"] for row in rows))
+        self.assertTrue(any("x64" in row["runner"] and row["kind"] == "aot" for row in rows))
+        self.assertFalse(any("h100" in row["runner"] for row in rows))
 
     def test_github_keeps_arm64_and_h100(self):
         rows = self.pr_matrix("https://github.com")
@@ -72,7 +74,7 @@ class HardwareWorkflowMatrixTest(unittest.TestCase):
         rows = self.pr_matrix("https://gitea.example", SKIP_GPU="true")
         self.assertTrue(all(row["kind"] == "aot" for row in rows))
 
-    def test_nightly_filters_arm_before_expansion(self):
+    def test_nightly_keeps_arm_on_both_platforms(self):
         jobs = workflow("nightly-release.yml")["jobs"]
         step = next(s for s in jobs["setup"]["steps"] if s.get("id") == "cuda-versions")
         gitea = run_step(step, {"CI_SERVER_URL": "https://gitea.example"})
@@ -81,7 +83,7 @@ class HardwareWorkflowMatrixTest(unittest.TestCase):
             all_rows = json.loads(github[kind])
             rows = json.loads(gitea[kind])
             self.assertTrue(any(row["cpu_architecture"] == "aarch64" for row in all_rows))
-            self.assertEqual(rows, [row for row in all_rows if row["cpu_architecture"] == "x86_64"])
+            self.assertEqual(rows, all_rows)
         self.assertIn("sm120", jobs["test-nightly-build"]["runs-on"])
 
 
