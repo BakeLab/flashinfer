@@ -456,7 +456,7 @@ jobs:
       matrix:
         cuda: ${{ fromJSON(needs.setup.outputs.runtime_cuda_matrix) }}
         test-shard: [1, 2, 3, 4, 5]
-    runs-on: [self-hosted, linux, x64, gpu, sm86, on-demand]
+    runs-on: [self-hosted, linux, x64, gpu, sm120, on-demand]
 
     steps:
       - name: Cleanup
