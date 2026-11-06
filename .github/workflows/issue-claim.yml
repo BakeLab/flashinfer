@@ -24,7 +24,9 @@ jobs:
   handle-claim:
     # Only run on issue comments (not PRs) that start with !claim or !assign
     # Skip comments from bots
+    # GitHub issue and collaborator APIs are not available on pull mirrors.
     if: |
+      github.server_url == 'https://github.com' &&
       github.event_name == 'issue_comment' &&
       !github.event.issue.pull_request &&
       github.event.comment.user.type != 'Bot' &&
@@ -246,7 +248,7 @@ jobs:
 
   auto-assign-on-accept:
     # Poll for users who accepted repo invitations after !assign
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.server_url == 'https://github.com' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
