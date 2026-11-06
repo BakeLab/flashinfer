@@ -124,13 +124,11 @@ jobs:
         run: python3 ci/validate_cuda_versions.py
 
       # A shard script that no longer parses fails here, on the PR that changed it,
-      # instead of silently un-scheduling later targeted A10G/T4 runs.
+      # instead of silently un-scheduling later targeted SM120 runs.
       - name: Validate bare-run coverage parse
         run: |
           python3 scripts/pr_checks/targeted_lane_scope.py --coverage-only \
             --scripts scripts/task_jit_run_tests_part{1,2,3,4,5}.sh
-          python3 scripts/pr_checks/targeted_lane_scope.py --coverage-only \
-            --scripts scripts/task_jit_run_tests_t4.sh
 
       - name: Get Docker Tag
         id: get-tag
@@ -227,35 +225,38 @@ jobs:
           # once capacity is restored.
           H100_ON_PRS: 'false'
           EVENT_NAME: ${{ github.event_name }}
+          CI_SERVER_URL: ${{ github.server_url }}
         run: |
           RUN_H100=true
+          if [ "$CI_SERVER_URL" != "https://github.com" ]; then
+            RUN_H100=false
+          fi
           if [ "$EVENT_NAME" = "pull_request" ] && [ "$H100_ON_PRS" != "true" ]; then
             RUN_H100=false
             echo "::notice title=H100 lane disabled on PRs::H100 tests run only in scheduled main runs and manual workflow_dispatch runs until runner capacity is restored" >&2
           fi
           echo "h100_disabled=$([ "$RUN_H100" = "true" ] && echo false || echo true)" >> "$GITHUB_OUTPUT"
           # A targeted run on a lane never tests more than that lane's bare run: H100
-          # gets the request as-is (its bare run covers tests/); A10G and T4 get it
+          # gets the request as-is (its bare run covers tests/); SM120 shards get it
           # intersected with their shard lists, and a lane left with nothing is skipped.
-          # A10G is intersected per shard: each shard whose files overlap the request
+          # SM120 is intersected per shard: each shard whose files overlap the request
           # runs as its own job, so a targeted run keeps the bare run's balancing and
           # -k splits, and shards left with nothing are not scheduled.
-          A10G_SCOPES=(); T4_SCOPE=""
+          SM120_SCOPES=()
           if [ "$SKIP_GPU" != "true" ] && [ -n "${REQUESTED_TEST_PATH}" ]; then
             for shard in 1 2 3 4 5; do
-              A10G_SCOPES[$shard]=$(python3 scripts/pr_checks/targeted_lane_scope.py \
+              SM120_SCOPES[$shard]=$(python3 scripts/pr_checks/targeted_lane_scope.py \
                 --scripts "scripts/task_jit_run_tests_part${shard}.sh" \
                 --targets "${REQUESTED_TEST_PATH}")
-              echo "A10G shard ${shard} targeted scope: ${A10G_SCOPES[$shard]:-<none: shard not scheduled>}"
+              echo "SM120 shard ${shard} targeted scope: ${SM120_SCOPES[$shard]:-<none: shard not scheduled>}"
             done
-            T4_SCOPE=$(python3 scripts/pr_checks/targeted_lane_scope.py \
-              --scripts scripts/task_jit_run_tests_t4.sh \
-              --targets "${REQUESTED_TEST_PATH}")
-            echo "T4 targeted scope:   ${T4_SCOPE:-<none: lane not scheduled>}"
           fi
           {
             if [ "$SKIP_AOT" != "true" ]; then
               for arch in x64 arm64; do
+                if [ "$CI_SERVER_URL" != "https://github.com" ] && [ "$arch" = "arm64" ]; then
+                  continue
+                fi
                 for cuda in $(jq -r '.[].label' <<< "${RUNTIME_CUDA_MATRIX}"); do
                   # Runtime entries land before their multi-arch image is
                   # published. The release-ci-docker workflow adds the tag in
@@ -279,25 +280,15 @@ jobs:
             if [ "$SKIP_GPU" != "true" ] && [ -z "${REQUESTED_TEST_PATH}" ]; then
               for shard in 1 2 3 4 5; do
                 jq -nc --arg shard "$shard" '{
-                  name: "JIT Unittest \($shard) (A10G)",
+                  name: "JIT Unittest \($shard) (SM120)",
                   kind: "gpu",
-                  gpu_name: "A10G",
-                  runner: ["self-hosted", "linux", "x64", "gpu", "sm86", "on-demand"],
+                  gpu_name: "SM120",
+                  runner: ["self-hosted", "linux", "x64", "gpu", "sm120", "on-demand"],
                   cuda: "cu129",
                   script: "task_jit_run_tests_part\($shard).sh",
                   timeout: 360
                 }'
               done
-
-              jq -nc '{
-                name: "JIT Unittest (T4)",
-                kind: "gpu",
-                gpu_name: "T4",
-                runner: ["self-hosted", "linux", "x64", "gpu", "sm75", "on-demand"],
-                cuda: "cu129",
-                script: "task_jit_run_tests_t4.sh",
-                timeout: 360
-              }'
 
               if [ "$RUN_H100" = "true" ]; then
                 jq -nc '{
@@ -315,23 +306,23 @@ jobs:
               # paths. There is deliberately no arch selection: tests carry their own
               # arch guards (is_sm90a_supported() and friends) and skip themselves where
               # unsupported - nobody has to keep a path-to-arch mapping in sync with the
-              # tests. Per-lane scopes (A10G_SCOPES / T4_SCOPE) are computed above the
+              # tests. Per-lane scopes (SM120_SCOPES) are computed above the
               # brace group, which is piped into jq and so runs in a subshell.
               #
-              # A10G runs its bare-run shard scripts, restricted to the scope through
-              # JIT_TEST_SCOPE (see scripts/jit_test_logging.sh). T4 and H100 use
+              # SM120 runs its bare-run shard scripts, restricted to the scope through
+              # JIT_TEST_SCOPE (see scripts/jit_test_logging.sh). H100 uses
               # task_run_unit_tests.sh, the script that forwards "$@" into TEST_PATH.
               #
               # This step does NOT parse the PR body. Turning a declared scope into paths
               # happens once, in whoever issues the trigger (a reviewer, or the screening
               # watcher posting under its own identity). CI runs what it is told.
               for shard in 1 2 3 4 5; do
-                if [ -n "${A10G_SCOPES[$shard]:-}" ]; then
-                  jq -nc --arg shard "$shard" --arg test_path "${A10G_SCOPES[$shard]}" '{
-                    name: "Targeted Unittest \($shard) (A10G)",
+                if [ -n "${SM120_SCOPES[$shard]:-}" ]; then
+                  jq -nc --arg shard "$shard" --arg test_path "${SM120_SCOPES[$shard]}" '{
+                    name: "Targeted Unittest \($shard) (SM120)",
                     kind: "gpu",
-                    gpu_name: "A10G",
-                    runner: ["self-hosted", "linux", "x64", "gpu", "sm86", "on-demand"],
+                    gpu_name: "SM120",
+                    runner: ["self-hosted", "linux", "x64", "gpu", "sm120", "on-demand"],
                     cuda: "cu129",
                     script: "task_jit_run_tests_part\($shard).sh",
                     test_path: $test_path,
@@ -339,18 +330,6 @@ jobs:
                   }'
                 fi
               done
-              if [ -n "${T4_SCOPE}" ]; then
-                jq -nc --arg test_path "${T4_SCOPE}" '{
-                  name: "Targeted Unittest (T4)",
-                  kind: "gpu",
-                  gpu_name: "T4",
-                  runner: ["self-hosted", "linux", "x64", "gpu", "sm75", "on-demand"],
-                  cuda: "cu129",
-                  script: "task_run_unit_tests.sh",
-                  test_path: $test_path,
-                  timeout: 360
-                }'
-              fi
               if [ "$RUN_H100" = "true" ]; then
                 jq -nc --arg test_path "${REQUESTED_TEST_PATH}" '{
                   name: "Targeted Unittest (H100)",
@@ -523,15 +502,6 @@ jobs:
           # step. Appended: DOCKER_ARGS already carries the sccache settings.
           mkdir -p junit
           DOCKER_ARGS+=(-e FLASHINFER_JIT_BUILD_LOG /workspace/junit/jit-builds.jsonl)
-          if [ "${MATRIX_KIND}" = "gpu" ] && [ "${TEST_SCRIPT}" = "task_run_unit_tests.sh" ]; then
-            # Targeted T4 runs compile with the same Ninja parallelism as the
-            # bare-run T4 script (MAX_JOBS=nproc) instead of test_utils.sh's
-            # 12 GB-per-nvcc budget, which was sized for H100 and resolves to
-            # MAX_JOBS=1 on these 8-vCPU / 30 GiB runners. The shard scripts have
-            # run these files at nproc without an OOM, and a 9-job targeted run of
-            # test_batch_prefill_kernels.py peaked at 12.3 GiB process-tree RSS.
-            DOCKER_ARGS+=(-e MAX_JOBS "$(nproc)")
-          fi
           TEST_TARGETS=()
           if [ -n "${TEST_PATH_ARG:-}" ]; then
             # Read into an array and expand quoted, rather than relying on word
@@ -543,7 +513,7 @@ jobs:
             set +f
           fi
           if [ "${#TEST_TARGETS[@]}" -gt 0 ] && [ "${TEST_SCRIPT}" != "task_run_unit_tests.sh" ]; then
-            # A10G shard scripts take no arguments; their pytest wrapper skips files
+            # SM120 shard scripts take no arguments; their pytest wrapper skips files
             # outside JIT_TEST_SCOPE. Comma-joined because ci/bash.sh word-splits
             # -e values.
             DOCKER_ARGS+=(-e JIT_TEST_SCOPE "$(IFS=,; echo "${TEST_TARGETS[*]}")")
@@ -615,7 +585,7 @@ jobs:
         if: ${{ always() && matrix.kind != 'aot' }}
         uses: actions/upload-artifact@v4
         with:
-          # Non-H100 names add the runner SM: A10G and T4 rows can run the same script.
+          # Non-H100 names add the runner SM to identify the shard hardware.
           name: junit-${{ matrix.kind == 'h100' && 'h100' || format('{0}-{1}', matrix.script, matrix.runner[4]) }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             junit/**/*.xml
@@ -806,7 +776,7 @@ jobs:
           merge-multiple: true
         continue-on-error: true
 
-      - name: Download shard JUnit artifacts (A10G/T4)
+      - name: Download shard JUnit artifacts (SM120)
         if: needs.gate.outputs.authorized == 'true' && needs.test.result != 'cancelled'
         uses: actions/download-artifact@v4
         with:
@@ -827,7 +797,7 @@ jobs:
             SUMMARY_ARGS="--summary junit-h100/run-summary.json"
           fi
 
-          # A10G/T4 shard lanes produce raw JUnit XML (no run-summary.json).
+          # SM120 shard lanes produce raw JUnit XML (no run-summary.json).
           # Discover them from the merged download directory.
           SHARD_ARGS=""
           if [ -d junit-shards ]; then
@@ -836,9 +806,9 @@ jobs:
             # junit-shard/tests/..., so after merge we get
             # junit-shards/tests/... from each lane.  Since the download
             # merges all lanes into one directory, we label the combined
-            # tree as "A10G+T4" — individual lane attribution would require
+            # tree as "SM120" — individual lane attribution would require
             # per-lane artifact naming, which the shard scripts don't do.
-            SHARD_ARGS="--junit-xml-lane A10G+T4 junit-shards"
+            SHARD_ARGS="--junit-xml-lane SM120 junit-shards"
           fi
 
           if [ -z "$SUMMARY_ARGS" ] && [ -z "$SHARD_ARGS" ]; then
