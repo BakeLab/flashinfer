@@ -99,7 +99,7 @@ jobs:
           echo "Not triggered by the run-ci label, skipping CI"
 
   # ---------------------------------------------------------------------------
-  # Setup - Read docker tag and check if build should be skipped
+  # Setup - Check if build should be skipped
   # ---------------------------------------------------------------------------
   setup:
     name: Setup
@@ -107,7 +107,6 @@ jobs:
     if: needs.gate.outputs.authorized == 'true'
     runs-on: ubuntu-latest
     outputs:
-      docker_tag: ${{ steps.get-tag.outputs.tag }}
       skip_build: ${{ steps.check.outputs.skip }}
       test_matrix: ${{ steps.matrix.outputs.matrix }}
       test_count: ${{ steps.matrix.outputs.count }}
@@ -128,17 +127,6 @@ jobs:
         run: |
           python3 scripts/pr_checks/targeted_lane_scope.py --coverage-only \
             --scripts scripts/task_jit_run_tests_part{1,2,3,4,5}.sh
-
-      - name: Get Docker Tag
-        id: get-tag
-        run: |
-          TAG=$(grep 'flashinfer/flashinfer-ci-cu134:' ci/docker-tags.yml | cut -d':' -f2 | tr -d ' ')
-          if [ -z "$TAG" ]; then
-            echo "::error::Failed to extract Docker tag from ci/docker-tags.yml"
-            exit 1
-          fi
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "Docker tag: $TAG"
 
       - name: Load runtime CUDA matrix
         id: cuda-versions
@@ -320,7 +308,7 @@ jobs:
       fail-fast: ${{ github.event_name != 'schedule' }}
       matrix: ${{ fromJSON(needs.setup.outputs.test_matrix) }}
     env:
-      DOCKER_IMAGE: flashinfer/flashinfer-ci-${{ matrix.cuda }}:${{ needs.setup.outputs.docker_tag }}
+      DOCKER_IMAGE: bakelab/flashinfer-ci-${{ matrix.cuda }}:${{ github.sha }}
       MATRIX_ARCH: ${{ matrix.runner[2] }}
       MATRIX_CUDA: ${{ matrix.cuda }}
       CI_GPU_NAME: ${{ matrix.gpu_name }}
@@ -356,6 +344,24 @@ jobs:
           # must not be left behind in .git/config. Nothing here uses git after
           # checkout, and submodules authenticate during the checkout itself.
           persist-credentials: false
+
+      - name: Build fork CI image
+        run: |
+          CUDA_CONFIG=$(jq -ce --arg label "${MATRIX_CUDA}" '.runtime[] | select(.label == $label)' ci/cuda-versions.json)
+          docker build --target ci --file docker/Dockerfile.ci \
+            --build-arg "CUDA_IMAGE=$(jq -r '.image' <<< "${CUDA_CONFIG}")" \
+            --build-arg "PYTORCH_INDEX=$(jq -r '.pytorch_index' <<< "${CUDA_CONFIG}")" \
+            --build-arg "CUDNN_VERSION=$(jq -r '.cudnn_version' <<< "${CUDA_CONFIG}")" \
+            --tag "${DOCKER_IMAGE}" .
+          # Run exactly the image built from this checkout, never a stale Hub tag.
+          IMAGE_ID=$(docker image inspect --format '{{.Id}}' "${DOCKER_IMAGE}")
+          echo "DOCKER_IMAGE=${IMAGE_ID}" >> "$GITHUB_ENV"
+          docker run --rm --pull=never -i "${IMAGE_ID}" python3 - <<'PYTHON'
+          import pathlib, sys
+          expected = tuple(map(int, pathlib.Path('/install/.python-version').read_text().strip().split('.')))
+          assert sys.version_info[:len(expected)] == expected, (sys.version, expected)
+          print(sys.version)
+          PYTHON
 
       - name: Show Node Info
         run: ./scripts/task_show_node_info.sh
@@ -393,10 +399,10 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ env.GPU_TEST_SCCACHE == '1' && secrets.SCCACHE_AWS_ACCESS_KEY_ID || '' }}
           AWS_SECRET_ACCESS_KEY: ${{ env.GPU_TEST_SCCACHE == '1' && secrets.SCCACHE_AWS_SECRET_ACCESS_KEY || '' }}
           # Kernel compile cache kept across this runner's jobs (see ci/bash.sh).
-          # runner.workspace is the parent of the checkout, so the Cleanup step's
-          # wipe of the checkout leaves it, and on persistent hosts it sits on the
+          # The parent of github.workspace survives the Cleanup step's workspace
+          # wipe, and on persistent hosts it sits on the
           # large NVMe work volume rather than the small root filesystem.
-          CI_COMPILE_CACHE_DIR: ${{ runner.workspace }}/flashinfer-compile-cache
+          CI_COMPILE_CACHE_DIR: ${{ github.workspace }}/../flashinfer-compile-cache
           CI_COMPILE_CACHE_RUNNER: ${{ runner.name }}
           # PR/manual runs consume private copies. Only main pushes update seeds.
           CI_COMPILE_CACHE_MODE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'read-write' || 'read-only' }}
