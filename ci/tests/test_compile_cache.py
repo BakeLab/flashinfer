@@ -52,6 +52,7 @@ if args[0] == 'pull':
     sys.exit(int(os.environ.get('MOCK_PULL_STATUS', '0')))
 if args[:2] == ['image', 'inspect']:
     print(os.environ['MOCK_IMAGE_ID'])
+    sys.exit(int(os.environ.get('MOCK_INSPECT_STATUS', '0')))
 if args[0] == 'run':
     mounts = [args[i+1] for i, arg in enumerate(args) if arg == '-v']
     private = next((m[:-len(':/compile-cache')] for m in mounts if m.endswith(':/compile-cache')), None)
@@ -90,9 +91,9 @@ if args[0] == 'run':
         path.write_text("warm artifact")
         return path
 
-    def run_script(self, *args):
+    def run_script(self, *args, image="org/image:tag"):
         result = subprocess.run(
-            ["bash", str(SCRIPT), "org/image:tag", *args, "true"],
+            ["bash", str(SCRIPT), image, *args, "true"],
             env=self.env,
             cwd=self.root,
             text=True,
@@ -101,6 +102,19 @@ if args[0] == 'run':
         )
         calls = [json.loads(line) for line in self.log.read_text().splitlines()]
         return result, calls
+
+    def test_local_image_id_does_not_pull(self):
+        self.env["MOCK_PULL_STATUS"] = "1"
+        result, calls = self.run_script("--no-gpu", image=IMAGE_ID)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any(call[0] == "pull" for call in calls))
+        self.assertTrue(any(call[0] == "run" for call in calls))
+
+    def test_missing_local_image_fails_before_run(self):
+        self.env["MOCK_INSPECT_STATUS"] = "1"
+        result, calls = self.run_script("--no-gpu", image=IMAGE_ID)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(call[0] in {"pull", "run"} for call in calls))
 
     def test_opt_out_and_cpu_mode(self):
         for args in (("--no-gpu",), ()):

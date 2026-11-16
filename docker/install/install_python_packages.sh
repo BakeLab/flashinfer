@@ -36,7 +36,7 @@ fi
 CUDA_TAG="${PYTORCH_INDEX##*/}"  # nightly/cu134 -> cu134
 CUDA_MAJOR="${CUDA_TAG:2:2}"     # cu129 -> 12, cu134 -> 13
 CUDA_MINOR="${CUDA_TAG:4}"       # cu129 -> 9, cu134 -> 4
-PYTORCH_INDEX_URL="https://download.pytorch.org/whl/${PYTORCH_INDEX}"
+PYTORCH_INDEX_URL="https://gitea.int.bb.pub/api/packages/BakeLab/pypi/simple/"
 CI_IMAGE_DEPENDENCY_OUTPUT="$(
   PYTHONPATH=/install python3 -c \
     'import sys; from build_utils import get_ci_image_dependency_requirements; print(*get_ci_image_dependency_requirements(sys.argv[1]), sep="\n")' \
@@ -54,20 +54,14 @@ if [[ "${CUDA_MAJOR}" == "13" ]] && (( 10#${CUDA_MINOR} < 4 )); then
   )
 fi
 
-# Install torch with specific CUDA version first, followed by others in requirements.txt, and then others.
-# This is to ensure that the torch version is compatible with the CUDA version.
-TORCH_INSTALL_ARGS=(--force-reinstall torch --index-url "${PYTORCH_INDEX_URL}")
-if [[ "${PYTORCH_INDEX}" == nightly/* ]]; then
-  TORCH_INSTALL_ARGS=(--pre "${TORCH_INSTALL_ARGS[@]}")
-fi
-pip3 install "${TORCH_INSTALL_ARGS[@]}"
+# Install the BakeLab fork exclusively from our registry. Resolve its other
+# dependencies below, without allowing a public-index torch replacement.
+pip3 install --pre --no-deps --force-reinstall torch --index-url "${PYTORCH_INDEX_URL}"
 
-# Pin the +cuXXX torch: it is unpinned in requirements.txt, so a dependency
-# conflict lets pip swap it for the PyPI build of a different CUDA major.
-# Strip the local +cuXXX tag so the constraint remains resolvable from PyPI.
+# Retain the complete fork version, including its local build identifier.
 # mktemp, not /install: the .dev images run this as a non-root USER.
 TORCH_CONSTRAINT="$(mktemp)"
-python3 -c 'import importlib.metadata as m; print("torch==" + m.version("torch").split("+", 1)[0])' \
+python3 -c 'import importlib.metadata as m; print("torch==" + m.version("torch"))' \
   > "$TORCH_CONSTRAINT"
 export PIP_CONSTRAINT="$TORCH_CONSTRAINT"
 

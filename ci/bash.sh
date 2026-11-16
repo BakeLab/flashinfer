@@ -125,9 +125,12 @@ echo "VOLUMES: ${DOCKER_VOLUMNS}"
 echo "COMMANDS: '${COMMAND[@]}'"
 
 # Resolve an immutable image before choosing its cache namespace.
-echo "Pulling latest image: ${DOCKER_IMAGE_NAME}"
-if ! ${DOCKER_BINARY} pull "${DOCKER_IMAGE_NAME}"; then
-    exit 1
+if [[ "${DOCKER_IMAGE_NAME}" == sha256:* ]]; then
+    # CI can supply the immutable ID of an image built from its own checkout.
+    ${DOCKER_BINARY} image inspect "${DOCKER_IMAGE_NAME}" >/dev/null || exit 1
+else
+    echo "Pulling latest image: ${DOCKER_IMAGE_NAME}"
+    ${DOCKER_BINARY} pull "${DOCKER_IMAGE_NAME}" || exit 1
 fi
 source "${SCRIPT_DIR}/compile_cache.sh"
 trap 'status=$?; cleanup_compile_cache; exit "$status"' EXIT
