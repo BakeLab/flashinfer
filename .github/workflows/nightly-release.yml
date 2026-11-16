@@ -318,20 +318,16 @@ jobs:
           name: flashinfer-cubin-wheel
           path: dist-cubin/
 
-      - name: Get Docker image tag
-        id: docker-tag
+      - name: Build fork CI image
         env:
           CUDA_LABEL: ${{ matrix.cuda.label }}
-        run: |
-          DOCKER_TAG=$(grep "flashinfer/flashinfer-ci-${CUDA_LABEL}" ci/docker-tags.yml | cut -d':' -f2 | tr -d ' ')
-          echo "cuda_version=${CUDA_LABEL}" >> "$GITHUB_OUTPUT"
-          echo "tag=${DOCKER_TAG}" >> "$GITHUB_OUTPUT"
+          DOCKER_IMAGE: bakelab/flashinfer-ci-${{ matrix.cuda.label }}:${{ github.sha }}
+        run: bash ci/build_ci_image.sh "${CUDA_LABEL}" "${DOCKER_IMAGE}"
 
       - name: Run nightly build tests in Docker (shard ${{ matrix.test-shard }})
         env:
           CUDA_VERSION: ${{ matrix.cuda.version }}
           CUDA_VISIBLE_DEVICES: 0
-          DOCKER_IMAGE: flashinfer/flashinfer-ci-${{ steps.docker-tag.outputs.cuda_version }}:${{ steps.docker-tag.outputs.tag }}
           TEST_SHARD: ${{ matrix.test-shard }}
         run: |
           bash ci/bash.sh "${DOCKER_IMAGE}" \
