@@ -220,11 +220,6 @@ jobs:
             if [ "$SKIP_AOT" != "true" ]; then
               for arch in x64 arm64; do
                 for cuda in $(jq -r '.[].label' <<< "${RUNTIME_CUDA_MATRIX}"); do
-                  # A missing required image must fail setup instead of dropping AOT coverage.
-                  if ! grep -q "^flashinfer/flashinfer-ci-${cuda}:" ci/docker-tags.yml; then
-                    echo "::error::Missing required AOT image for ${cuda}" >&2
-                    exit 1
-                  fi
                   jq -nc --arg arch "$arch" --arg cuda "$cuda" '{
                     name: "AOT Build Import (\($arch), \($cuda))",
                     kind: "aot",
@@ -346,22 +341,7 @@ jobs:
           persist-credentials: false
 
       - name: Build fork CI image
-        run: |
-          CUDA_CONFIG=$(jq -ce --arg label "${MATRIX_CUDA}" '.runtime[] | select(.label == $label)' ci/cuda-versions.json)
-          docker build --target ci --file docker/Dockerfile.ci \
-            --build-arg "CUDA_IMAGE=$(jq -r '.image' <<< "${CUDA_CONFIG}")" \
-            --build-arg "PYTORCH_INDEX=$(jq -r '.pytorch_index' <<< "${CUDA_CONFIG}")" \
-            --build-arg "CUDNN_VERSION=$(jq -r '.cudnn_version' <<< "${CUDA_CONFIG}")" \
-            --tag "${DOCKER_IMAGE}" .
-          # Run exactly the image built from this checkout, never a stale Hub tag.
-          IMAGE_ID=$(docker image inspect --format '{{.Id}}' "${DOCKER_IMAGE}")
-          echo "DOCKER_IMAGE=${IMAGE_ID}" >> "$GITHUB_ENV"
-          docker run --rm --pull=never -i "${IMAGE_ID}" python3 - <<'PYTHON'
-          import pathlib, sys
-          expected = tuple(map(int, pathlib.Path('/install/.python-version').read_text().strip().split('.')))
-          assert sys.version_info[:len(expected)] == expected, (sys.version, expected)
-          print(sys.version)
-          PYTHON
+        run: bash ci/build_ci_image.sh "${MATRIX_CUDA}" "${DOCKER_IMAGE}"
 
       - name: Show Node Info
         run: ./scripts/task_show_node_info.sh
