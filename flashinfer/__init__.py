@@ -172,8 +172,6 @@ _PRIMS_TS_LAZY_EXPORTS = frozenset(
 
 
 def __getattr__(name: str):
-    if name in _COMPAT_SUBMODULES:
-        return importlib.import_module(f"{__name__}.{name}")
     if name not in _PRIMS_TS_LAZY_EXPORTS:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     from . import fused_moe as _fused_moe
